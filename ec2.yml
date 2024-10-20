@@ -1,0 +1,80 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to set up EC2 with Docker and Jenkins
+
+Parameters:
+  InstanceType:
+    Description: The EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+
+Resources:
+  JenkinsInstance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      InstanceType: !Ref InstanceType
+      ImageId: ami-04dd23e62ed049936 
+      KeyName: docker
+      SecurityGroupIds:
+        - !Ref JenkinsSecurityGroup
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo apt update -y
+          sudo apt install -y fontconfig openjdk-17-jre
+          java -version
+
+          sudo wget -O /usr/share/keyrings/jenkins-keyring.asc \
+          https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+          echo "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc]" \
+          https://pkg.jenkins.io/debian-stable binary/ | sudo tee \
+          /etc/apt/sources.list.d/jenkins.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install jenkins -y
+
+          for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
+          # Add Docker's official GPG key:
+          sudo apt-get update -y
+          sudo apt-get install ca-certificates curl -y
+          sudo install -m 0755 -d /etc/apt/keyrings 
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+          # Add the repository to Apt sources:
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update -y
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+  JenkinsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: Allow HTTP, Jenkins, and SSH access
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0 
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          CidrIp: 0.0.0.0/0 
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0 # Change this for better security
+
+  JenkinsEIP:
+    Type: AWS::EC2::EIP
+
+  JenkinsEIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref JenkinsInstance
+      EIP: !Ref JenkinsEIP
+
+Outputs:
+  JenkinsURL:
+    Description: "URL for Jenkins"
+    Value: !Sub "http://${JenkinsEIP}:8080"
